@@ -37,8 +37,10 @@ function buildSplit(daysPerWeek: number): string[] {
     return ["Push", "Pull", "Legs", "Rest", "Upper Body", "Lower Body", "Rest"];
   } else if (daysPerWeek === 6) {
     return ["Push", "Pull", "Legs", "Push", "Pull", "Legs", "Rest"];
+  } else if (daysPerWeek === 7) {
+    return ["Push", "Pull", "Legs", "Upper Body", "Lower Body", "Push", "Full Body"];
   } else {
-    return ["Push", "Pull", "Legs", "Rest", "Upper Body", "Lower Body", "Full Body"];
+    return ["Push", "Pull", "Legs", "Upper Body", "Lower Body", "Push", "Full Body"];
   }
 }
 
@@ -152,7 +154,10 @@ function roundToNearestHalf(value: number): number {
 function findPreviousExercise(
   previousPlan: PlanGenerationInput["previousPlan"],
   exerciseName: string
-): (Exercise & { logs: LoggedSet[] }) | null {
+): {
+  exercise: Exercise & { logs: LoggedSet[] };
+  scheduled_date: string;
+} | null {
   if (!previousPlan) {
     return null;
   }
@@ -164,7 +169,10 @@ function findPreviousExercise(
       const exercise = day.exercises[j];
 
       if (exercise.name === exerciseName) {
-        return exercise;
+        return {
+          exercise,
+          scheduled_date: day.scheduled_date,
+        };
       }
     }
   }
@@ -279,15 +287,15 @@ function getHistoricalWeight(
     targetDate
   );
 
-  const previousExercise = findPreviousExercise(previousPlan, name);
+  const previousExerciseEntry = findPreviousExercise(previousPlan, name);
   const fallbackProgressionStep = getProgressionStep(name, level);
   const baseWeight =
     latestMatchingSession?.current_weight ??
-    previousExercise?.current_weight ??
+    previousExerciseEntry?.exercise.current_weight ??
     getDefaultWeight(name, level);
   const progressionStep =
     latestMatchingSession?.progression_step ??
-    previousExercise?.progression_step ??
+    previousExerciseEntry?.exercise.progression_step ??
     fallbackProgressionStep;
 
   let score = 0;
@@ -352,26 +360,39 @@ function getNextWeight(
     return historicalWeight;
   }
 
-  const previousExercise = findPreviousExercise(previousPlan, name);
+  const previousExerciseEntry = findPreviousExercise(previousPlan, name);
 
-  if (!previousExercise) {
+  if (!previousExerciseEntry) {
     return getDefaultWeight(name, level);
   }
 
-  const outcome = getExerciseOutcome(previousExercise, previousExercise.logs);
+  if (
+    previousExerciseEntry.exercise.logs.length === 0 &&
+    previousExerciseEntry.scheduled_date >= targetDate
+  ) {
+    return previousExerciseEntry.exercise.current_weight;
+  }
+
+  const outcome = getExerciseOutcome(
+    previousExerciseEntry.exercise,
+    previousExerciseEntry.exercise.logs
+  );
 
   if (outcome === "completed") {
-    return previousExercise.current_weight + previousExercise.progression_step;
+    return (
+      previousExerciseEntry.exercise.current_weight +
+      previousExerciseEntry.exercise.progression_step
+    );
   }
 
   if (outcome === "partial" || outcome === "missed") {
     return getReducedWeight(
-      previousExercise.current_weight,
-      previousExercise.progression_step
+      previousExerciseEntry.exercise.current_weight,
+      previousExerciseEntry.exercise.progression_step
     );
   }
 
-  return previousExercise.current_weight;
+  return previousExerciseEntry.exercise.current_weight;
 }
 
 export function generatePlan(input: PlanGenerationInput): PlanGenerationOutput {

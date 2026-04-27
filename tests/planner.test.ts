@@ -240,11 +240,15 @@ describe("generatePlan", () => {
     ]);
   });
 
-  it("should generate 7 total days and include Full Body on day 7 for a 7-day user", () => {
+  it("should generate 7 workout days for a 7-day user", () => {
     const user = makeUser("advanced", 7);
     const result = generatePlan({ user });
+    const workoutGroups = getWorkoutDays(result).map((day) => day.muscle_group);
 
     expect(result.days.length).toBe(7);
+    expect(workoutGroups.length).toBe(7);
+    expect(getRestDays(result).length).toBe(0);
+    expect(result.days[3].muscle_group).toBe("Upper Body");
     expect(result.days[6].muscle_group).toBe("Full Body");
   });
 
@@ -572,6 +576,29 @@ describe("generatePlan", () => {
 
     expect(benchPress).toBeDefined();
     expect(benchPress?.current_weight).toBe(60);
+  });
+
+  it("should keep the same weight when previous planned exercise has no logs yet", () => {
+    const user = makeUser("advanced", 3);
+
+    const previousPlan = makePreviousPlanForExercise("Bench Press", {
+      currentWeight: 115,
+      progressionStep: 5,
+      targetSets: 4,
+      targetReps: 6,
+      logs: []
+    });
+
+    const result = generatePlan({
+      user,
+      previousPlan,
+      week_start: "2025-03-31"
+    });
+
+    const benchPress = getExerciseByName(result, "Bench Press");
+
+    expect(benchPress).toBeDefined();
+    expect(benchPress?.current_weight).toBe(115);
   });
 
   it("should not reduce weight below the progression step minimum", () => {

@@ -28,6 +28,26 @@ function hasAnyLogs(day: PlanWithDetails["days"][number]): boolean {
   return false;
 }
 
+export function getExtraUnloggedWorkoutDayNumbers(
+  currentPlan: PlanWithDetails,
+  desiredDays: PlanGenerationInput["previousPlan"]["days"]
+): number[] {
+  const desiredRestDayNumbers = new Set(
+    desiredDays
+      .filter((day) => day.muscle_group === "Rest")
+      .map((day) => day.day_number)
+  );
+
+  return currentPlan.days
+    .filter(
+      (day) =>
+        day.muscle_group !== "Rest" &&
+        !hasAnyLogs(day) &&
+        desiredRestDayNumbers.has(day.day_number)
+    )
+    .map((day) => day.day_number);
+}
+
 function buildRegenerationMessage(
   regenerateDayNumbers: number[],
   todayFrozen: boolean
@@ -235,27 +255,38 @@ export async function regeneratePlan(
     await loadHistoricalSessions(api, user.id),
     todayISO
   );
+  const desiredTemplate = generatePlan({
+    user,
+    week_start: currentPlan.week_start,
+    previousPlan: currentPlanDetails,
+    historical_sessions: historicalSessions,
+  });
   const todayDay =
     currentPlanDetails.days.find((day) => day.scheduled_date === todayISO) ?? null;
   const todayFrozen = !!todayDay && hasAnyLogs(todayDay);
 
-  const regenerateDayNumbers = currentPlanDetails.days
-    .filter((day) => {
-      if (day.scheduled_date < todayISO) {
-        return false;
-      }
+  const regenerateDayNumbers = Array.from(
+    new Set([
+      ...currentPlanDetails.days
+        .filter((day) => {
+          if (day.scheduled_date < todayISO) {
+            return false;
+          }
 
-      if (day.scheduled_date === todayISO && todayFrozen) {
-        return false;
-      }
+          if (day.scheduled_date === todayISO && todayFrozen) {
+            return false;
+          }
 
-      if (hasAnyLogs(day)) {
-        return false;
-      }
+          if (hasAnyLogs(day)) {
+            return false;
+          }
 
-      return true;
-    })
-    .map((day) => day.day_number);
+          return true;
+        })
+        .map((day) => day.day_number),
+      ...getExtraUnloggedWorkoutDayNumbers(currentPlanDetails, desiredTemplate.days),
+    ])
+  ).sort((a, b) => a - b);
 
   if (regenerateDayNumbers.length === 0) {
     return {
