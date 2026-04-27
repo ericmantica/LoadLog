@@ -11,6 +11,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { RootStackParamList } from '../App';
+import type { InsertLoggedSet } from '../types';
+import { loadLogApi } from '../services/loadLogApi';
+import { getWorkoutDayStatus } from '../utils/workout_evaluation';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'WorkoutLogger'>;
 
@@ -50,6 +53,7 @@ const WorkoutLoggerScreen: React.FC<Props> = ({ navigation, route }) => {
     }, [day.exercises]);
 
     const [exerciseLogs, setExerciseLogs] = useState<ExerciseLogState[]>(initialExercises);
+    const [saving, setSaving] = useState(false);
 
     const updateSetField = (
         exerciseId: string,
@@ -109,8 +113,93 @@ const WorkoutLoggerScreen: React.FC<Props> = ({ navigation, route }) => {
         );
     };
 
-    const handleFinishWorkout = () => {
-        //TODO
+    const handleFinishWorkout = async () => {
+        const logsToInsert: InsertLoggedSet[] = [];
+
+        for (let i = 0; i < exerciseLogs.length; i++) {
+            const exercise = exerciseLogs[i];
+
+            for (let j = 0; j < exercise.sets.length; j++) {
+                const set = exercise.sets[j];
+                const weight = Number(set.weight);
+                const reps = Number(set.reps);
+
+                if (
+                    !Number.isFinite(weight) ||
+                    weight < 0 ||
+                    !Number.isFinite(reps) ||
+                    reps < 0
+                ) {
+                    Alert.alert(
+                        'Invalid input',
+                        'Weights and reps must be valid non-negative numbers.'
+                    );
+                    return;
+                }
+
+                logsToInsert.push({
+                    exercise_id: exercise.exerciseId,
+                    set_number: j + 1,
+                    reps_completed: reps,
+                    weight_used: weight,
+                    completed: set.completed,
+                });
+            }
+        }
+
+        if (logsToInsert.length === 0) {
+            Alert.alert('No sets to save', 'Please add at least one set before finishing.');
+            return;
+        }
+
+        setSaving(true);
+
+        try {
+            await loadLogApi.workouts.replaceDayLogs(day.id, logsToInsert);
+
+            const logsByExerciseId: Record<string, typeof logsToInsert> = {};
+
+            for (let i = 0; i < logsToInsert.length; i++) {
+                const loggedSet = logsToInsert[i];
+
+                if (!logsByExerciseId[loggedSet.exercise_id]) {
+                    logsByExerciseId[loggedSet.exercise_id] = [];
+                }
+
+                logsByExerciseId[loggedSet.exercise_id].push(loggedSet);
+            }
+
+            const workoutDayStatus = getWorkoutDayStatus(
+                day.exercises.map((exercise) => ({
+                    target_sets: exercise.target_sets,
+                    target_reps: exercise.target_reps,
+                    current_weight: exercise.current_weight,
+                })),
+                logsByExerciseId,
+                day.exercises.map((exercise) => exercise.id)
+            );
+
+            await loadLogApi.workouts.updateWorkoutDayStatus(day.id, workoutDayStatus);
+
+            const session = await loadLogApi.auth.getSession();
+
+            if (session) {
+                await loadLogApi.stats.updateStreak(session.id);
+            }
+
+            Alert.alert('Workout saved', 'Your workout has been logged successfully.');
+            navigation.goBack();
+        } catch (error) {
+            let message = 'Failed to save workout.';
+
+            if (error instanceof Error && error.message) {
+                message = error.message;
+            }
+
+            Alert.alert('Save failed', message);
+        } finally {
+            setSaving(false);
+        }
     };
 
     return (
@@ -216,8 +305,14 @@ const WorkoutLoggerScreen: React.FC<Props> = ({ navigation, route }) => {
                     </View>
                 ))}
 
-                <TouchableOpacity style={styles.finishButton} onPress={handleFinishWorkout}>
-                    <Text style={styles.finishButtonText}>Finish Workout</Text>
+                <TouchableOpacity
+                    style={[styles.finishButton, saving && styles.finishButtonDisabled]}
+                    onPress={handleFinishWorkout}
+                    disabled={saving}
+                >
+                    <Text style={styles.finishButtonText}>
+                        {saving ? 'Saving...' : 'Finish Workout'}
+                    </Text>
                 </TouchableOpacity>
             </ScrollView>
         </SafeAreaView>
@@ -381,6 +476,9 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         paddingVertical: 16,
         marginTop: 6,
+    },
+    finishButtonDisabled: {
+        opacity: 0.65,
     },
     finishButtonText: {
         color: '#fff',

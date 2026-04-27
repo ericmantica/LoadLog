@@ -1,5 +1,5 @@
 import type { LoggedSet } from '../types';
-import { calculateStreak } from '../utils/streak';
+import { calculateStreak } from '../utils/streak_calculation';
 
 function makeLog(id: string, loggedAt: string, completed = true): LoggedSet {
   return {

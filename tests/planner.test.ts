@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
-import { generatePlan } from "./planner";
-import type { PlanGenerationInput, UserProfile } from "./types";
+import { describe, expect, it } from "vitest";
+import { generatePlan } from "../planner";
+import type {
+  HistoricalExerciseSession,
+  PlanGenerationInput,
+  UserProfile
+} from "../types";
 
 function makeUser(
   fitness_level: UserProfile["fitness_level"],
@@ -8,6 +12,7 @@ function makeUser(
 ): UserProfile {
   return {
     id: "user-1",
+    username: "alice",
     email: "test@example.com",
     display_name: "Alice",
     fitness_level,
@@ -74,6 +79,49 @@ function makePreviousPlanForExercise(
         ]
       }
     ]
+  };
+}
+
+function makeHistoricalSession(
+  exercise_name: string,
+  muscle_group: string,
+  scheduled_date: string,
+  options?: {
+    currentWeight?: number;
+    progressionStep?: number;
+    targetSets?: number;
+    targetReps?: number;
+    logs?: {
+      reps_completed: number;
+      completed: boolean;
+      weight_used?: number;
+    }[];
+  }
+): HistoricalExerciseSession {
+  const currentWeight = options?.currentWeight ?? 100;
+  const progressionStep = options?.progressionStep ?? 5;
+  const targetSets = options?.targetSets ?? 2;
+  const targetReps = options?.targetReps ?? 10;
+  const logsInput = options?.logs ?? [];
+
+  return {
+    exercise_id: `${exercise_name}-${scheduled_date}`,
+    exercise_name,
+    muscle_group,
+    scheduled_date,
+    target_sets: targetSets,
+    target_reps: targetReps,
+    current_weight: currentWeight,
+    progression_step: progressionStep,
+    logs: logsInput.map((log, index) => ({
+      id: `${exercise_name}-${scheduled_date}-log-${index + 1}`,
+      exercise_id: `${exercise_name}-${scheduled_date}`,
+      set_number: index + 1,
+      reps_completed: log.reps_completed,
+      weight_used: log.weight_used ?? currentWeight,
+      completed: log.completed,
+      logged_at: `${scheduled_date}T10:00:00.000Z`
+    }))
   };
 }
 
@@ -372,7 +420,7 @@ describe("generatePlan", () => {
     const benchPress = getExerciseByName(result, "Bench Press");
 
     expect(benchPress).toBeDefined();
-    expect(benchPress?.current_weight).toBe(65);
+    expect(benchPress?.current_weight).toBe(45);
   });
 
   it("should use advanced default weight for Bench Press when no previous plan exists", () => {
@@ -381,7 +429,7 @@ describe("generatePlan", () => {
     const benchPress = getExerciseByName(result, "Bench Press");
 
     expect(benchPress).toBeDefined();
-    expect(benchPress?.current_weight).toBe(135);
+    expect(benchPress?.current_weight).toBe(115);
   });
 
   it("should increase weight when previous exercise was completed", () => {
@@ -415,7 +463,7 @@ describe("generatePlan", () => {
     expect(benchPress?.current_weight).toBe(70);
   });
 
-  it("should keep weight the same when previous exercise was partial because logs were fewer than target sets", () => {
+  it("should reduce weight when previous exercise was partial because logs were fewer than target sets", () => {
     const user = makeUser("beginner", 3);
 
     const previousPlan = makePreviousPlanForExercise("Bench Press", {
@@ -439,10 +487,10 @@ describe("generatePlan", () => {
     const benchPress = getExerciseByName(result, "Bench Press");
 
     expect(benchPress).toBeDefined();
-    expect(benchPress?.current_weight).toBe(65);
+    expect(benchPress?.current_weight).toBe(60);
   });
 
-  it("should keep weight the same when previous exercise was partial because reps were below target", () => {
+  it("should reduce weight when previous exercise was partial because reps were below target", () => {
     const user = makeUser("beginner", 3);
 
     const previousPlan = makePreviousPlanForExercise("Bench Press", {
@@ -470,10 +518,10 @@ describe("generatePlan", () => {
     const benchPress = getExerciseByName(result, "Bench Press");
 
     expect(benchPress).toBeDefined();
-    expect(benchPress?.current_weight).toBe(65);
+    expect(benchPress?.current_weight).toBe(60);
   });
 
-  it("should keep weight the same when previous exercise was partial because completed was false", () => {
+  it("should reduce weight when previous exercise was partial because completed was false", () => {
     const user = makeUser("beginner", 3);
 
     const previousPlan = makePreviousPlanForExercise("Bench Press", {
@@ -501,7 +549,7 @@ describe("generatePlan", () => {
     const benchPress = getExerciseByName(result, "Bench Press");
 
     expect(benchPress).toBeDefined();
-    expect(benchPress?.current_weight).toBe(65);
+    expect(benchPress?.current_weight).toBe(60);
   });
 
   it("should reduce weight when previous exercise was missed", () => {
@@ -576,10 +624,10 @@ describe("generatePlan", () => {
     const benchPress = getExerciseByName(result, "Bench Press");
 
     expect(benchPress).toBeDefined();
-    expect(benchPress?.current_weight).toBe(65);
+    expect(benchPress?.current_weight).toBe(45);
   });
 
-  it("should keep previous weight for Full Body exercise when logs do not qualify", () => {
+  it("should reduce previous weight for Full Body exercise when logs do not qualify", () => {
     const user = makeUser("beginner", 3);
 
     const previousPlan = makePreviousPlanForExercise("Chest Press", {
@@ -607,7 +655,7 @@ describe("generatePlan", () => {
     const chestPress = getExerciseByName(result, "Chest Press");
 
     expect(chestPress).toBeDefined();
-    expect(chestPress?.current_weight).toBe(70);
+    expect(chestPress?.current_weight).toBe(65);
   });
 
   it("should increase weight for Full Body exercise when logs qualify", () => {
@@ -661,5 +709,93 @@ describe("generatePlan", () => {
 
     expect(chestPress).toBeDefined();
     expect(chestPress?.current_weight).toBe(65);
+  });
+
+  it("should use same muscle group history to increase weight for regenerated future days", () => {
+    const user = makeUser("intermediate", 5);
+    const result = generatePlan({
+      user,
+      week_start: "2025-04-07",
+      day_numbers: [5],
+      historical_sessions: [
+        makeHistoricalSession("Bench Press", "Upper Body", "2025-04-01", {
+          currentWeight: 75,
+          logs: [
+            { reps_completed: 8, completed: true },
+            { reps_completed: 8, completed: true },
+            { reps_completed: 8, completed: true }
+          ],
+          targetSets: 3,
+          targetReps: 8
+        }),
+        makeHistoricalSession("Shoulder Press", "Upper Body", "2025-04-03", {
+          currentWeight: 30,
+          progressionStep: 5,
+          logs: [
+            { reps_completed: 8, completed: true },
+            { reps_completed: 8, completed: true },
+            { reps_completed: 8, completed: true }
+          ],
+          targetSets: 3,
+          targetReps: 8
+        })
+      ]
+    });
+
+    const benchPress = getExerciseByName(result, "Bench Press");
+
+    expect(benchPress).toBeDefined();
+    expect(benchPress?.current_weight).toBe(77.5);
+  });
+
+  it("should use smaller conservative decreases when there are fewer than 7 matching sessions", () => {
+    const user = makeUser("intermediate", 5);
+    const result = generatePlan({
+      user,
+      week_start: "2025-04-07",
+      day_numbers: [5],
+      historical_sessions: [
+        makeHistoricalSession("Bench Press", "Upper Body", "2025-04-01", {
+          currentWeight: 75,
+          logs: [
+            { reps_completed: 6, completed: true },
+            { reps_completed: 6, completed: true }
+          ],
+          targetSets: 3,
+          targetReps: 8
+        })
+      ]
+    });
+
+    const benchPress = getExerciseByName(result, "Bench Press");
+
+    expect(benchPress).toBeDefined();
+    expect(benchPress?.current_weight).toBe(72.5);
+  });
+
+  it("should ignore future same muscle group sessions when generating today's or future days", () => {
+    const user = makeUser("intermediate", 5);
+    const result = generatePlan({
+      user,
+      week_start: "2025-04-07",
+      day_numbers: [5],
+      historical_sessions: [
+        makeHistoricalSession("Bench Press", "Upper Body", "2025-04-12", {
+          currentWeight: 95,
+          logs: [
+            { reps_completed: 8, completed: true },
+            { reps_completed: 8, completed: true },
+            { reps_completed: 8, completed: true }
+          ],
+          targetSets: 3,
+          targetReps: 8
+        })
+      ]
+    });
+
+    const benchPress = getExerciseByName(result, "Bench Press");
+
+    expect(benchPress).toBeDefined();
+    expect(benchPress?.current_weight).toBe(75);
   });
 });

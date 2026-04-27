@@ -1,50 +1,87 @@
-# Welcome to your Expo app 👋
+# LoadLog
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+LoadLog is an Expo + Supabase workout planner and logger. Users sign in with `username + password`, generate a weekly plan, log workouts, track streaks, and review workout history.
 
-## Get started
+## Shared Supabase Project Setup
 
-1. Install dependencies
+This repo is set up for a single shared Supabase project.
+
+Only one maintainer needs to configure Supabase. Everyone else can pull the repo, add the shared client env vars, and run the app locally.
+
+### What teammates need from the shared project
+
+Share these two values privately with collaborators:
+
+```bash
+EXPO_PUBLIC_SUPABASE_URL=...
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
+```
+
+These are client-side values and are safe to use in the app.
+
+Do not share the Supabase `service_role` key.
+
+## One-Time Maintainer Setup
+
+If you are the person managing the shared Supabase project:
+
+1. Run the schema in Supabase SQL Editor:
+   - [scripts/supabase_schema.sql](scripts/supabase_schema.sql)
+   - If the project ever used an older version of the schema, run the script again to pick up the latest RLS policy updates.
+
+2. Configure Supabase Auth:
+   - `Authentication -> Sign In / Providers -> Email`
+   - Enable the Email provider
+   - Disable `Confirm email`
+   - Make sure new-user signup is allowed
+
+3. Share the project URL and publishable key with teammates.
+
+This app uses Supabase email auth behind the scenes with an internal email derived from the username, so `Confirm email` must stay off for signup to work.
+
+## Teammate Setup
+
+1. Clone the repo:
+
+   ```bash
+   git clone <your-repo-url>
+   cd LoadLog
+   ```
+
+2. Install dependencies:
 
    ```bash
    npm install
    ```
 
-2. Start the app
+3. Create `.env.local` in the project root.
+
+   You can copy from `.env.example` and fill in the shared values:
 
    ```bash
-   npx expo start
+   EXPO_PUBLIC_SUPABASE_URL=...
+   EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=...
    ```
 
-In the output, you'll find options to open the app in a
+4. Start the app:
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+   ```bash
+   npm run start
+   ```
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+5. Sign up or sign in with `username + password`.
 
-## Get a fresh project
+## Verification
 
-When you're ready, run:
+Before pushing, it is a good idea to verify the project still runs cleanly:
 
 ```bash
-npm run reset-project
+npm run lint
+npx vitest run tests/planner.test.ts
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Notes
 
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- `.env.local` is intentionally not committed.
+- Because everyone uses the same Supabase project, all users will consume the same backend quota.
+- Row Level Security is enabled, so users should only be able to access their own app data.

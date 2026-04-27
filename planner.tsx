@@ -1,6 +1,7 @@
 import type {
   UserProfile,
   Exercise,
+  HistoricalExerciseSession,
   LoggedSet,
   InsertWeeklyPlan,
   InsertWorkoutDay,
@@ -10,6 +11,7 @@ import type {
 } from "./types";
 
 import { getWeekStartISO } from "./planUtils";
+import { getExerciseOutcome } from "./utils/workout_evaluation";
 
 function addDaysToISO(isoDate: string, daysToAdd: number): string {
   const date = new Date(isoDate + "T00:00:00");
@@ -86,23 +88,23 @@ function getDefaultWeight(
     string,
     { beginner: number; intermediate: number; advanced: number }
   > = {
-    "Bench Press": { beginner: 65, intermediate: 95, advanced: 135 },
-    "Shoulder Press": { beginner: 30, intermediate: 45, advanced: 60 },
-    "Lat Pulldown": { beginner: 50, intermediate: 70, advanced: 100 },
-    "Seated Row": { beginner: 50, intermediate: 70, advanced: 100 },
-    "Squat": { beginner: 95, intermediate: 135, advanced: 185 },
-    "Leg Press": { beginner: 90, intermediate: 140, advanced: 180 },
-    "Romanian Deadlift": { beginner: 75, intermediate: 115, advanced: 155 },
-    "Calf Raise": { beginner: 40, intermediate: 60, advanced: 90 },
-    "Goblet Squat": { beginner: 25, intermediate: 40, advanced: 55 },
-    "Chest Press": { beginner: 50, intermediate: 70, advanced: 100 },
-    "Dumbbell Shoulder Press": { beginner: 20, intermediate: 30, advanced: 40 },
-    "Incline Dumbbell Press": { beginner: 25, intermediate: 40, advanced: 55 },
-    "Triceps Pushdown": { beginner: 25, intermediate: 40, advanced: 55 },
-    "Seated Cable Row": { beginner: 50, intermediate: 70, advanced: 100 },
-    "Face Pull": { beginner: 20, intermediate: 30, advanced: 45 },
-    "Dumbbell Curl": { beginner: 15, intermediate: 25, advanced: 35 },
-    "Leg Curl": { beginner: 40, intermediate: 60, advanced: 80 }
+    "Bench Press": { beginner: 45, intermediate: 75, advanced: 115 },
+    "Shoulder Press": { beginner: 15, intermediate: 30, advanced: 45 },
+    "Lat Pulldown": { beginner: 40, intermediate: 60, advanced: 90 },
+    "Seated Row": { beginner: 40, intermediate: 60, advanced: 90 },
+    "Squat": { beginner: 45, intermediate: 95, advanced: 155 },
+    "Leg Press": { beginner: 90, intermediate: 140, advanced: 220 },
+    "Romanian Deadlift": { beginner: 45, intermediate: 95, advanced: 155 },
+    "Calf Raise": { beginner: 25, intermediate: 50, advanced: 80 },
+    "Goblet Squat": { beginner: 15, intermediate: 30, advanced: 50 },
+    "Chest Press": { beginner: 40, intermediate: 65, advanced: 95 },
+    "Dumbbell Shoulder Press": { beginner: 10, intermediate: 20, advanced: 30 },
+    "Incline Dumbbell Press": { beginner: 15, intermediate: 25, advanced: 40 },
+    "Triceps Pushdown": { beginner: 15, intermediate: 30, advanced: 45 },
+    "Seated Cable Row": { beginner: 40, intermediate: 60, advanced: 90 },
+    "Face Pull": { beginner: 15, intermediate: 25, advanced: 40 },
+    "Dumbbell Curl": { beginner: 10, intermediate: 20, advanced: 30 },
+    "Leg Curl": { beginner: 30, intermediate: 50, advanced: 70 }
   };
 
   if (weights[name]) {
@@ -110,15 +112,18 @@ function getDefaultWeight(
   }
 
   if (level === "beginner") {
-    return 25;
+    return 10;
   } else if (level === "intermediate") {
-    return 40;
+    return 25;
   } else {
-    return 60;
+    return 40;
   }
 }
 
-function getProgressionStep(name: string): number {
+function getProgressionStep(
+  name: string,
+  level: UserProfile["fitness_level"]
+): number {
   if (
     name === "Bench Press" ||
     name === "Squat" ||
@@ -126,10 +131,22 @@ function getProgressionStep(name: string): number {
     name === "Romanian Deadlift" ||
     name === "Chest Press"
   ) {
+    if (level === "advanced" && (name === "Leg Press" || name === "Squat")) {
+      return 10;
+    }
+
     return 5;
   } else {
+    if (level === "beginner") {
+      return 2.5;
+    }
+
     return 5;
   }
+}
+
+function roundToNearestHalf(value: number): number {
+  return Math.round(value * 2) / 2;
 }
 
 function findPreviousExercise(
@@ -155,37 +172,57 @@ function findPreviousExercise(
   return null;
 }
 
-
-function getExerciseOutcome(
-  previousExercise: Exercise & { logs: LoggedSet[] }
-): "completed" | "partial" | "missed" {
-  const neededSets = previousExercise.target_sets;
-  const neededReps = previousExercise.target_reps;
-
-  if (previousExercise.logs.length === 0) {
-    return "missed";
+function getMuscleGroupHistory(
+  historicalSessions: HistoricalExerciseSession[] | undefined,
+  muscleGroup: string,
+  targetDate: string
+): HistoricalExerciseSession[] {
+  if (!historicalSessions) {
+    return [];
   }
 
-  if (previousExercise.logs.length < neededSets) {
-    return "partial";
-  }
+  return historicalSessions
+    .filter(
+      (session) =>
+        session.muscle_group === muscleGroup &&
+        session.scheduled_date < targetDate
+    )
+    .sort((a, b) => {
+      if (a.scheduled_date === b.scheduled_date) {
+        return b.exercise_name.localeCompare(a.exercise_name);
+      }
 
-  let completedSets = 0;
-
-  for (let i = 0; i < previousExercise.logs.length; i++) {
-    const log = previousExercise.logs[i];
-
-    if (log.completed && log.reps_completed >= neededReps) {
-      completedSets = completedSets + 1;
-    }
-  }
-
-  if (completedSets >= neededSets) {
-    return "completed";
-  }
-
-  return "partial";
+      return b.scheduled_date.localeCompare(a.scheduled_date);
+    })
+    .slice(0, 7);
 }
+
+function findLatestMatchingExerciseSession(
+  historicalSessions: HistoricalExerciseSession[] | undefined,
+  muscleGroup: string,
+  exerciseName: string,
+  targetDate: string
+): HistoricalExerciseSession | null {
+  if (!historicalSessions) {
+    return null;
+  }
+
+  const matchingSessions = historicalSessions
+    .filter(
+      (session) =>
+        session.muscle_group === muscleGroup &&
+        session.exercise_name === exerciseName &&
+        session.scheduled_date < targetDate
+    )
+    .sort((a, b) => b.scheduled_date.localeCompare(a.scheduled_date));
+
+  if (matchingSessions.length === 0) {
+    return null;
+  }
+
+  return matchingSessions[0];
+}
+
 
 function getReducedWeight(
   currentWeight: number,
@@ -200,24 +237,134 @@ function getReducedWeight(
   return reducedWeight;
 }
 
+function getAdjustedWeight(
+  baseWeight: number,
+  direction: "up" | "down",
+  progressionStep: number,
+  useConservativeAdjustment: boolean
+): number {
+  const adjustment = useConservativeAdjustment
+    ? Math.max(0.5, progressionStep / 2)
+    : progressionStep;
+
+  if (direction === "up") {
+    return roundToNearestHalf(baseWeight + adjustment);
+  }
+
+  return roundToNearestHalf(getReducedWeight(baseWeight, adjustment));
+}
+
+function getHistoricalWeight(
+  name: string,
+  muscleGroup: string,
+  level: UserProfile["fitness_level"],
+  targetDate: string,
+  historicalSessions: HistoricalExerciseSession[] | undefined,
+  previousPlan?: PlanGenerationInput["previousPlan"]
+): number | null {
+  const recentGroupSessions = getMuscleGroupHistory(
+    historicalSessions,
+    muscleGroup,
+    targetDate
+  );
+
+  if (recentGroupSessions.length === 0) {
+    return null;
+  }
+
+  const latestMatchingSession = findLatestMatchingExerciseSession(
+    historicalSessions,
+    muscleGroup,
+    name,
+    targetDate
+  );
+
+  const previousExercise = findPreviousExercise(previousPlan, name);
+  const fallbackProgressionStep = getProgressionStep(name, level);
+  const baseWeight =
+    latestMatchingSession?.current_weight ??
+    previousExercise?.current_weight ??
+    getDefaultWeight(name, level);
+  const progressionStep =
+    latestMatchingSession?.progression_step ??
+    previousExercise?.progression_step ??
+    fallbackProgressionStep;
+
+  let score = 0;
+
+  for (let i = 0; i < recentGroupSessions.length; i++) {
+    const session = recentGroupSessions[i];
+    const outcome = getExerciseOutcome(
+      {
+        target_sets: session.target_sets,
+        target_reps: session.target_reps,
+        current_weight: session.current_weight,
+      },
+      session.logs
+    );
+
+    if (outcome === "completed") {
+      score += 1;
+    } else {
+      score -= 1;
+    }
+  }
+
+  if (score > 0) {
+    return getAdjustedWeight(
+      baseWeight,
+      "up",
+      progressionStep,
+      recentGroupSessions.length < 7
+    );
+  }
+
+  if (score < 0) {
+    return getAdjustedWeight(
+      baseWeight,
+      "down",
+      progressionStep,
+      recentGroupSessions.length < 7
+    );
+  }
+
+  return roundToNearestHalf(baseWeight);
+}
+
 function getNextWeight(
   name: string,
+  muscleGroup: string,
   level: UserProfile["fitness_level"],
+  targetDate: string,
+  historicalSessions?: HistoricalExerciseSession[],
   previousPlan?: PlanGenerationInput["previousPlan"]
 ): number {
+  const historicalWeight = getHistoricalWeight(
+    name,
+    muscleGroup,
+    level,
+    targetDate,
+    historicalSessions,
+    previousPlan
+  );
+
+  if (historicalWeight !== null) {
+    return historicalWeight;
+  }
+
   const previousExercise = findPreviousExercise(previousPlan, name);
 
   if (!previousExercise) {
     return getDefaultWeight(name, level);
   }
 
-  const outcome = getExerciseOutcome(previousExercise);
+  const outcome = getExerciseOutcome(previousExercise, previousExercise.logs);
 
   if (outcome === "completed") {
     return previousExercise.current_weight + previousExercise.progression_step;
   }
 
-  if (outcome === "missed") {
+  if (outcome === "partial" || outcome === "missed") {
     return getReducedWeight(
       previousExercise.current_weight,
       previousExercise.progression_step
@@ -229,7 +376,8 @@ function getNextWeight(
 
 export function generatePlan(input: PlanGenerationInput): PlanGenerationOutput {
   const user = input.user;
-  const weekStart = getWeekStartISO(new Date());
+  const weekStart = input.week_start ?? getWeekStartISO(new Date());
+  const includedDayNumbers = input.day_numbers ?? [1, 2, 3, 4, 5, 6, 7];
   const split = buildSplit(user.available_days_per_week);
 
   const plan: InsertWeeklyPlan = {
@@ -243,10 +391,15 @@ export function generatePlan(input: PlanGenerationInput): PlanGenerationOutput {
   for (let i = 0; i < 7; i++) {
     const group = split[i];
     const scheduledDate = addDaysToISO(weekStart, i);
+    const dayNumber = i + 1;
+
+    if (!includedDayNumbers.includes(dayNumber)) {
+      continue;
+    }
 
     const day: InsertWorkoutDay & { exercises: InsertExercise[] } = {
       plan_id: "TEMP_PLAN_ID",
-      day_number: i + 1,
+      day_number: dayNumber,
       muscle_group: group,
       status: "scheduled",
       scheduled_date: scheduledDate,
@@ -263,8 +416,15 @@ export function generatePlan(input: PlanGenerationInput): PlanGenerationOutput {
         name: name,
         target_sets: getTargetSets(user.fitness_level),
         target_reps: getTargetReps(user.fitness_level),
-        current_weight: getNextWeight(name, user.fitness_level, input.previousPlan),
-        progression_step: getProgressionStep(name)
+        current_weight: getNextWeight(
+          name,
+          group,
+          user.fitness_level,
+          scheduledDate,
+          input.historical_sessions,
+          input.previousPlan
+        ),
+        progression_step: getProgressionStep(name, user.fitness_level)
       };
 
       day.exercises.push(exercise);

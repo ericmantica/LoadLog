@@ -1,4 +1,4 @@
-import type { LoggedSet } from '@/types';
+import type { LoggedSet } from '../types';
 
 export interface StreakCalculationResult {
   current_streak: number;
